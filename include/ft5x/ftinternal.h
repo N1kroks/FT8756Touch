@@ -29,6 +29,10 @@
 #include <Cross Platform Shim/hweight.h>
 #include <report.h>
 
+#define FTS_CMD_START1  0x55
+#define FTS_CMD_START2  0xAA
+#define FTS_CMD_READ_ID 0x90
+
 // Ignore warning C4152: nonstandard extension, function/data pointer conversion in expression
 #pragma warning (disable : 4152)
 

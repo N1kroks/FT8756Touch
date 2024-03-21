@@ -25,6 +25,7 @@
         WPP_DEFINE_BIT(TRACE_OTHER)         \
         WPP_DEFINE_BIT(TRACE_IDLE)          \
 		WPP_DEFINE_BIT(TRACE_DRIVER)		\
+		WPP_DEFINE_BIT(TRACE_FTFWUPDATE)	\
         )
 
 #define WPP_FLAG_LEVEL_LOGGER(flag, level)                                  \

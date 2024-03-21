@@ -24,7 +24,7 @@
 #include <resolutions.h>
 #include <hid.h>
 #include <HidCommon.h>
-#include <spb.h>
+#include <_spb.h>
 #include <report.h>
 #include <report.tmh>
 
@@ -378,7 +378,7 @@ Return Value:
 
 		currentFingerIndex = 0;
 
-		fingersToReport = min(ReportContext->Cache.DownCount - TouchesReported, 2);
+		fingersToReport = min(ReportContext->Cache.DownCount - TouchesReported, 10);
 
 		HidReport.ReportID = REPORTID_FINGER;
 
@@ -451,10 +451,10 @@ Return Value:
 			//
 			// Perform per-platform x/y adjustments to controller coordinates
 			//
-			TchTranslateToDisplayCoordinates(
+			/*TchTranslateToDisplayCoordinates(
 				&SctatchX,
 				&ScratchY,
-				&ReportContext->Props);
+				&ReportContext->Props);*/
 
 			if (info.status == OBJECT_STATE_FINGER_PRESENT_WITH_ACCURATE_POS)
 			{

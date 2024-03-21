@@ -20,7 +20,7 @@
 --*/
 
 #include <Cross Platform Shim\compat.h>
-#include <spb.h>
+#include <_spb.h>
 #include <ft5x\ftinternal.h>
 #include <init.tmh>
 
@@ -200,8 +200,8 @@ Return Value:
 	FT5X_CONTROLLER_CONTEXT* context;
 	NTSTATUS status;
 	
-	context = ExAllocatePoolWithTag(
-		NonPagedPoolNx,
+	context = ExAllocatePool2(
+		POOL_FLAG_NON_PAGED,
 		sizeof(FT5X_CONTROLLER_CONTEXT),
 		TOUCH_POOL_TAG);
 

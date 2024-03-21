@@ -19,10 +19,11 @@
 --*/
 
 #include <Cross Platform Shim\compat.h>
-#include <spb.h>
 #include <report.h>
 #include <ft5x\ftinternal.h>
+#include <ft5x\ftfwupdate.h>
 #include <ftinternal.tmh>
+#include <_spb.h>
 
 NTSTATUS
 Ft5xBuildFunctionsTable(
@@ -52,14 +53,62 @@ Ft5xChangePage(
 
 NTSTATUS
 Ft5xConfigureFunctions(
-      IN FT5X_CONTROLLER_CONTEXT* ControllerContext,
-      IN SPB_CONTEXT* SpbContext
+    IN FT5X_CONTROLLER_CONTEXT* ControllerContext,
+    IN SPB_CONTEXT* SpbContext
 )
 {
-      UNREFERENCED_PARAMETER(SpbContext);
-      UNREFERENCED_PARAMETER(ControllerContext);
+    NTSTATUS status;
+    FT5X_CONTROLLER_CONTEXT* controller;
+    controller = (FT5X_CONTROLLER_CONTEXT*)ControllerContext;
 
-      return STATUS_SUCCESS;
+    UINT8 IdCmd[2] = { FTS_CMD_START1, FTS_CMD_START2 };
+    UINT8 ChipId[2] = { 0 };
+    status = FTS_Write(SpbContext, IdCmd, 2);
+    if (!NT_SUCCESS(status)) {
+        Trace(
+            TRACE_LEVEL_ERROR,
+            TRACE_INTERRUPT,
+            "Failed to start - 0x%08lX",
+            status);
+        goto exit;
+    }
+
+    IdCmd[0] = FTS_CMD_READ_ID;
+    IdCmd[1] = 0x0;
+
+    status = FTS_Read(SpbContext, IdCmd, ChipId, 2);
+    if (!NT_SUCCESS(status)) {
+        Trace(
+            TRACE_LEVEL_ERROR,
+            TRACE_INTERRUPT,
+            "Failed to read ChipID - 0x%08lX",
+            status);
+        goto exit;
+    }
+
+    Trace(TRACE_LEVEL_INFORMATION, TRACE_INTERRUPT, "Chip ID: 0x%02x%02x", ChipId[0], ChipId[1]);
+
+    status = FTLoadFirmwareFile(controller->FxDevice, SpbContext);
+
+    ChipId[0] = 0x0;
+    ChipId[1] = 0x0;
+
+    IdCmd[0] = FTS_CMD_READ_ID;
+    IdCmd[1] = 0x0;
+
+    status = FTS_Read(SpbContext, IdCmd, ChipId, 2);
+    if (!NT_SUCCESS(status)) {
+        Trace(
+            TRACE_LEVEL_ERROR,
+            TRACE_INTERRUPT,
+            "Failed to read ChipID - 0x%08lX",
+            status);
+        goto exit;
+    }
+
+    Trace(TRACE_LEVEL_INFORMATION, TRACE_INTERRUPT, "Chip ID after load firmware: 0x%02x%02x", ChipId[0], ChipId[1]);
+exit:
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -88,69 +137,37 @@ Return Value:
 
 --*/
 {
-      NTSTATUS status;
-      FT5X_CONTROLLER_CONTEXT* controller;
+    NTSTATUS status = STATUS_SUCCESS;
+    FT5X_CONTROLLER_CONTEXT* controller;
+    controller = (FT5X_CONTROLLER_CONTEXT*)ControllerContext;
 
-      int i, x, y;
-      PFOCAL_TECH_EVENT_DATA controllerData = NULL;
-      controller = (FT5X_CONTROLLER_CONTEXT*)ControllerContext;
+    UINT32 base = 0;
 
-      controllerData = ExAllocatePoolWithTag(
-            NonPagedPoolNx,
-            sizeof(FOCAL_TECH_EVENT_DATA),
-            TOUCH_POOL_TAG_F12);
+    UINT8 input_id = 0;
+    UINT8 point[63] = { 0 };
+    point[0] = 0x1;
 
-      if (controllerData == NULL)
-      {
-            status = STATUS_INSUFFICIENT_RESOURCES;
-            goto exit;
-      }
+    status = FTS_Read(SpbContext, point, point + 1, 62);
+    if (!NT_SUCCESS(status)) {
+        Trace(TRACE_LEVEL_ERROR, TRACE_INTERRUPT, "failed to read finger status data %!STATUS!", status);
+        goto exit;
+    }
 
-      // 
-      // Packets we need is determined by context
-      //
-      status = SpbReadDataSynchronously(SpbContext, 0, controllerData, sizeof(FOCAL_TECH_EVENT_DATA));
+    for (UINT8 i = 0; i < 10; i++) {
+        base = 6 * i;
+        input_id = point[5 + base] >> 4;
+        if (input_id > 10)
+            break;
 
-      if (!NT_SUCCESS(status))
-      {
-            Trace(
-                  TRACE_LEVEL_ERROR,
-                  TRACE_INTERRUPT,
-                  "Error reading finger status data - 0x%08lX",
-                  status);
-
-            goto free_buffer;
-      }
-
-      BYTE X_MSB = 0;
-      BYTE X_LSB = 0;
-      BYTE Y_MSB = 0;
-      BYTE Y_LSB = 0;
-
-      for (i = 0; i < controllerData->NumberOfTouchPoints; i++)
-      {
-            X_MSB = controllerData->TouchData[i].PositionX_High;
-            X_LSB = controllerData->TouchData[i].PositionX_Low;
-            Y_MSB = controllerData->TouchData[i].PositionY_High;
-            Y_LSB = controllerData->TouchData[i].PositionY_Low;
-
-            Data->States[i] = OBJECT_STATE_FINGER_PRESENT_WITH_ACCURATE_POS;
-
-            x = (X_MSB << 8) | X_LSB;
-            y = (Y_MSB << 8) | Y_LSB;
-
-            Data->Positions[i].X = x;
-            Data->Positions[i].Y = y;
-      }
-
-free_buffer:
-      ExFreePoolWithTag(
-            controllerData,
-            TOUCH_POOL_TAG_F12
-      );
+        if ((point[3 + base] >> 6) == 0x0 || (point[3 + base] >> 6) == 0x2) {
+            Data->States[input_id] = OBJECT_STATE_FINGER_PRESENT_WITH_ACCURATE_POS;
+            Data->Positions[input_id].X = ((point[3 + base] & 0x0F) << 8) + (point[4 + base] & 0xFF);
+            Data->Positions[input_id].Y = ((point[5 + base] & 0x0F) << 8) + (point[6 + base] & 0xFF);
+       }
+    }
 
 exit:
-      return status;
+    return status;
 }
 
 NTSTATUS

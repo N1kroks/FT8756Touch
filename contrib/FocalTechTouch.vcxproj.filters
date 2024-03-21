@@ -19,12 +19,6 @@
     <Filter Include="Header Files\Cross Platform Shim">
       <UniqueIdentifier>{9686f0d4-e35c-4f82-a1bb-f9e1b58bf934}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\selftest">
-      <UniqueIdentifier>{bbeaca4f-005a-4329-b642-6946e7fce119}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\selftest">
-      <UniqueIdentifier>{78f7e746-a2d4-42d7-8a03-0e5247e4883d}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Header Files\touch_power">
       <UniqueIdentifier>{d3ddf542-5d45-45a5-ae69-536980bbcada}</UniqueIdentifier>
     </Filter>
@@ -74,12 +68,6 @@
     </ClCompile>
     <ClCompile Include="..\src\Cross Platform Shim\hweight.c">
       <Filter>Source Files\Cross Platform Shim</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\selftest\enoselftest.c">
-      <Filter>Source Files\selftest</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\selftest\selftest.c">
-      <Filter>Source Files\selftest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\touch_power\touch_power.c">
       <Filter>Source Files\touch_power</Filter>
@@ -147,12 +135,6 @@
     <ClInclude Include="..\include\Cross Platform Shim\hweight.h">
       <Filter>Header Files\Cross Platform Shim</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\selftest\selftest.h">
-      <Filter>Header Files\selftest</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\selftest\enoselftest.h">
-      <Filter>Header Files\selftest</Filter>
-    </ClInclude>
     <ClInclude Include="..\include\touch_power\touch_power.h">
       <Filter>Header Files\touch_power</Filter>
     </ClInclude>
@@ -165,5 +147,8 @@
     <ClInclude Include="..\include\ft5x\ftinternal.h">
       <Filter>Header Files\ft5x</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\firmware\focaltech_ts_fw_huaxing.bin" />
   </ItemGroup>
 </Project>

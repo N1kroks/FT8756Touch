@@ -25,8 +25,6 @@
 #include <device.h>
 #include <hid.h>
 #include <queue.h>
-#include <selftest\selftest.h>
-#include <selftest\enoselftest.h>
 #include <driver.h>
 #include <driver.tmh>
 
@@ -286,38 +284,6 @@ Return Value:
             TRACE_LEVEL_ERROR,
             TRACE_INIT,
             "Error creating WDF interrupt object - 0x%08lX",
-            status);
-
-        goto exit;
-    }
-
-    //
-    // Initialize driver path for self-test
-    //
-    status = TchSelfTestInitialize(fxDevice);
-
-    if (!NT_SUCCESS(status))
-    {
-        Trace(
-            TRACE_LEVEL_ERROR,
-            TRACE_INIT,
-            "Error initializing self-test functionality - %!STATUS!",
-            status);
-
-        goto exit;
-    }
-
-    //
-    // Initialize driver path for self-test
-    //
-    status = TchEnoSelfTestInitialize(fxDevice);
-
-    if (!NT_SUCCESS(status))
-    {
-        Trace(
-            TRACE_LEVEL_ERROR,
-            TRACE_INIT,
-            "Error initializing Eno self-test functionality - %!STATUS!",
             status);
 
         goto exit;

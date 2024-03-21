@@ -21,313 +21,237 @@
 
 #include <internal.h>
 #include <controller.h>
-#include "spb.h"
+#include "_spb.h"
+#include <spb.h>
+#define RESHUB_USE_HELPER_ROUTINES
+#include <reshub.h>
 #include <spb.tmh>
 
-#define I2C_VERBOSE_LOGGING 0
-
-NTSTATUS
-SpbDoWriteDataSynchronously(
-    IN SPB_CONTEXT* SpbContext,
-    IN UCHAR Address,
-    IN PVOID Data,
-    IN ULONG Length
-)
-/*++
-
-  Routine Description:
-
-    This helper routine abstracts creating and sending an I/O
-    request (I2C Write) to the Spb I/O target.
-
-  Arguments:
-
-    SpbContext - Pointer to the current device context
-    Address    - The I2C register address to write to
-    Data       - A buffer to receive the data at at the above address
-    Length     - The amount of data to be read from the above address
-
-  Return Value:
-
-    NTSTATUS Status indicating success or failure
-
---*/
-{
-    PUCHAR buffer;
-    ULONG length;
-    WDFMEMORY memory;
-    WDF_MEMORY_DESCRIPTOR memoryDescriptor;
+NTSTATUS FTS_Read(IN SPB_CONTEXT* SpbContext, IN UINT8* cmd, OUT UINT8* data, IN UINT32 datalen) {
     NTSTATUS status;
+    WDFMEMORY memoryRead = NULL, memoryWrite = NULL;
+    PUCHAR bufferRead, bufferWrite;
+    WDF_MEMORY_DESCRIPTOR memoryDescriptor;
+    UINT32 txlen = 0;
+    UINT32 txlen_need = datalen + 9;
+    UINT8 ctrl = (0x80 | 0x20);
+    UINT32 dp = 0;
 
-    //
-    // The address pointer and data buffer must be combined
-    // into one contiguous buffer representing the write transaction.
-    //
-    length = Length + 1;
-    memory = NULL;
-
-    if (length > DEFAULT_SPB_BUFFER_SIZE)
+    WdfWaitLockAcquire(SpbContext->SpbLock, NULL);
+    if (txlen_need > DEFAULT_SPB_BUFFER_SIZE)
     {
         status = WdfMemoryCreate(
             WDF_NO_OBJECT_ATTRIBUTES,
             NonPagedPool,
             TOUCH_POOL_TAG,
-            length,
-            &memory,
-            &buffer);
+            txlen_need,
+            &memoryWrite,
+            &bufferWrite);
 
         if (!NT_SUCCESS(status))
         {
-            Trace(
-                TRACE_LEVEL_ERROR,
-                TRACE_SPB,
-                "Error allocating memory for Spb write - 0x%08lX",
-                status);
+            Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Error allocating memory for Spb write - 0x%08lX", status);
             goto exit;
         }
 
-        WDF_MEMORY_DESCRIPTOR_INIT_HANDLE(
-            &memoryDescriptor,
-            memory,
-            NULL);
+        status = WdfMemoryCreate(
+            WDF_NO_OBJECT_ATTRIBUTES,
+            NonPagedPool,
+            TOUCH_POOL_TAG,
+            txlen_need,
+            &memoryRead,
+            &bufferRead);
+
+        if (!NT_SUCCESS(status))
+        {
+            Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Error allocating memory for Spb read - 0x%08lX", status);
+            goto exit;
+        }
     }
-    else
+    else {
+        bufferWrite = (PUCHAR)WdfMemoryGetBuffer(SpbContext->WriteMemory, NULL);
+        bufferRead = (PUCHAR)WdfMemoryGetBuffer(SpbContext->ReadMemory, NULL);
+    }
+
+    bufferWrite[txlen++] = cmd[0];
+    bufferWrite[txlen++] = ctrl;
+    bufferWrite[txlen++] = (datalen >> 8) & 0xFF;
+    bufferWrite[txlen++] = datalen & 0xFF;
+    dp = txlen + 3;
+    txlen = dp + datalen;
+    if (ctrl & 0x20) {
+        txlen = txlen + 2;
+    }
+
+    SPB_TRANSFER_LIST_AND_ENTRIES(2) seq;
+    SPB_TRANSFER_LIST_INIT(&(seq.List), 2);
+
     {
-        buffer = (PUCHAR)WdfMemoryGetBuffer(SpbContext->WriteMemory, NULL);
-
-        WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(
-            &memoryDescriptor,
-            (PVOID)buffer,
-            length);
+        ULONG index = 0;
+        seq.List.Transfers[index] = SPB_TRANSFER_LIST_ENTRY_INIT_SIMPLE(
+            SpbTransferDirectionToDevice,
+            0,
+            bufferWrite,
+            (ULONG)txlen
+        );
+        seq.List.Transfers[index + 1] = SPB_TRANSFER_LIST_ENTRY_INIT_SIMPLE(
+            SpbTransferDirectionFromDevice,
+            0,
+            bufferRead,
+            (ULONG)txlen
+        );
     }
 
-    //
-    // Transaction starts by specifying the address bytes
-    //
-    RtlCopyMemory(buffer, &Address, sizeof(Address));
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(
+        &memoryDescriptor,
+        &seq,
+        sizeof(seq)
+    );
 
-    //
-    // Address is followed by the data payload
-    //
-    RtlCopyMemory((buffer + sizeof(Address)), Data, length - sizeof(Address));
-
-#if I2C_VERBOSE_LOGGING
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "I2CWRITE: LENGTH=%d", length);
-    for (ULONG j = 0; j < length; j++)
-    {
-        UCHAR byte = *(buffer + j);
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, " %02hhX", byte);
-    }
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
-#endif
-
-    status = WdfIoTargetSendWriteSynchronously(
+    status = WdfIoTargetSendIoctlSynchronously(
         SpbContext->SpbIoTarget,
         NULL,
+        IOCTL_SPB_FULL_DUPLEX,
         &memoryDescriptor,
         NULL,
         NULL,
-        NULL);
+        NULL
+    );
 
-    if (!NT_SUCCESS(status))
-    {
-        Trace(
-            TRACE_LEVEL_ERROR,
-            TRACE_SPB,
-            "Error writing to Spb - 0x%08lX",
-            status);
+    if (!NT_SUCCESS(status)) {
+        Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Failed to send ioctl - 0x%08lX", status);
         goto exit;
     }
 
+    if ((bufferRead[3] & 0xA0) == 0) {
+        RtlCopyMemory(data, &bufferRead[dp], datalen);
+
+        //TODO: Add a crc check
+    }
+    else {
+        Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Error during data getting addr: 0x%X, status: 0x%X", cmd[0], bufferRead[3]);
+        goto exit;
+    }
 exit:
-
-    if (NULL != memory)
+    if (NULL != memoryRead)
     {
-        WdfObjectDelete(memory);
+        WdfObjectDelete(memoryRead);
     }
 
-    return status;
-}
-
-NTSTATUS
-SpbWriteDataSynchronously(
-    IN SPB_CONTEXT* SpbContext,
-    IN UCHAR Address,
-    IN PVOID Data,
-    IN ULONG Length
-)
-/*++
-
-  Routine Description:
-
-    This routine abstracts creating and sending an I/O
-    request (I2C Write) to the Spb I/O target and utilizes
-    a helper routine to do work inside of locked code.
-
-  Arguments:
-
-    SpbContext - Pointer to the current device context
-    Address    - The I2C register address to write to
-    Data       - A buffer to receive the data at at the above address
-    Length     - The amount of data to be read from the above address
-
-  Return Value:
-
-    NTSTATUS Status indicating success or failure
-
---*/
-{
-    NTSTATUS status;
-
-    WdfWaitLockAcquire(SpbContext->SpbLock, NULL);
-
-    status = SpbDoWriteDataSynchronously(
-        SpbContext,
-        Address,
-        Data,
-        Length);
-
+    if (NULL != memoryWrite)
+    {
+        WdfObjectDelete(memoryWrite);
+    }
     WdfWaitLockRelease(SpbContext->SpbLock);
-
     return status;
 }
 
-NTSTATUS
-SpbReadDataSynchronously(
-    IN SPB_CONTEXT* SpbContext,
-    IN UCHAR Address,
-    _In_reads_bytes_(Length) PVOID Data,
-    IN ULONG Length
-)
-/*++
-
-  Routine Description:
-
-    This helper routine abstracts creating and sending an I/O
-    request (I2C Read) to the Spb I/O target.
-
-  Arguments:
-
-    SpbContext - Pointer to the current device context
-    Address    - The I2C register address to read from
-    Data       - A buffer to receive the data at at the above address
-    Length     - The amount of data to be read from the above address
-
-  Return Value:
-
-    NTSTATUS Status indicating success or failure
-
---*/
-{
-    PUCHAR buffer;
-    WDFMEMORY memory;
-    WDF_MEMORY_DESCRIPTOR memoryDescriptor;
+NTSTATUS FTS_Write(IN SPB_CONTEXT* SpbContext, IN UINT8* cmd, IN UINT32 writelen) {
     NTSTATUS status;
-    ULONG_PTR bytesRead;
+    WDFMEMORY memoryRead = NULL, memoryWrite = NULL;
+    PUCHAR bufferRead, bufferWrite;
+    WDF_MEMORY_DESCRIPTOR memoryDescriptor;
+    UINT32 txlen = 0;
+    UINT32 txlen_need = writelen + 9;
+    UINT32 datalen = writelen - 1;
 
     WdfWaitLockAcquire(SpbContext->SpbLock, NULL);
-
-    memory = NULL;
-    status = STATUS_INVALID_PARAMETER;
-    bytesRead = 0;
-
-    //
-    // Read transactions start by writing an address pointer
-    //
-    status = SpbDoWriteDataSynchronously(
-        SpbContext,
-        Address,
-        NULL,
-        0);
-
-    if (!NT_SUCCESS(status))
-    {
-        Trace(
-            TRACE_LEVEL_ERROR,
-            TRACE_SPB,
-            "Error setting address pointer for Spb read - 0x%08lX",
-            status);
-        goto exit;
-    }
-
-    if (Length > DEFAULT_SPB_BUFFER_SIZE)
+    if (txlen_need > DEFAULT_SPB_BUFFER_SIZE)
     {
         status = WdfMemoryCreate(
             WDF_NO_OBJECT_ATTRIBUTES,
             NonPagedPool,
             TOUCH_POOL_TAG,
-            Length,
-            &memory,
-            &buffer);
+            txlen_need,
+            &memoryWrite,
+            &bufferWrite);
 
         if (!NT_SUCCESS(status))
         {
-            Trace(
-                TRACE_LEVEL_ERROR,
-                TRACE_SPB,
-                "Error allocating memory for Spb read - 0x%08lX",
-                status);
+            Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Error allocating memory for Spb write - 0x%08lX", status);
             goto exit;
         }
 
-        WDF_MEMORY_DESCRIPTOR_INIT_HANDLE(
-            &memoryDescriptor,
-            memory,
-            NULL);
+        status = WdfMemoryCreate(
+            WDF_NO_OBJECT_ATTRIBUTES,
+            NonPagedPool,
+            TOUCH_POOL_TAG,
+            txlen_need,
+            &memoryRead,
+            &bufferRead);
+
+        if (!NT_SUCCESS(status))
+        {
+            Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Error allocating memory for Spb read - 0x%08lX", status);
+            goto exit;
+        }
     }
     else
     {
-        buffer = (PUCHAR)WdfMemoryGetBuffer(SpbContext->ReadMemory, NULL);
-
-        WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(
-            &memoryDescriptor,
-            (PVOID)buffer,
-            Length);
+        bufferWrite = (PUCHAR)WdfMemoryGetBuffer(SpbContext->WriteMemory, NULL);
+        bufferRead = (PUCHAR)WdfMemoryGetBuffer(SpbContext->ReadMemory, NULL);
     }
 
+    bufferWrite[txlen++] = cmd[0];
+    bufferWrite[txlen++] = 0x00;
+    bufferWrite[txlen++] = (datalen >> 8) & 0xFF;
+    bufferWrite[txlen++] = datalen & 0xFF;
+    if (datalen > 0) {
+        txlen = txlen + 3;
+        RtlCopyMemory(&bufferWrite[txlen], &cmd[1], datalen);
+        txlen = txlen + datalen;
+    }
 
-    status = WdfIoTargetSendReadSynchronously(
+    SPB_TRANSFER_LIST_AND_ENTRIES(2) seq;
+    SPB_TRANSFER_LIST_INIT(&(seq.List), 2);
+
+    {
+        ULONG index = 0;
+        seq.List.Transfers[index] = SPB_TRANSFER_LIST_ENTRY_INIT_SIMPLE(
+            SpbTransferDirectionToDevice,
+            0,
+            bufferWrite,
+            (ULONG)txlen
+        );
+        seq.List.Transfers[index + 1] = SPB_TRANSFER_LIST_ENTRY_INIT_SIMPLE(
+            SpbTransferDirectionFromDevice,
+            0,
+            bufferRead,
+            (ULONG)txlen
+        );
+    }
+
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(
+        &memoryDescriptor,
+        &seq,
+        sizeof(seq)
+    );
+
+    status = WdfIoTargetSendIoctlSynchronously(
         SpbContext->SpbIoTarget,
         NULL,
+        IOCTL_SPB_FULL_DUPLEX,
         &memoryDescriptor,
         NULL,
         NULL,
-        &bytesRead);
-
-    if (!NT_SUCCESS(status) ||
-        bytesRead != Length)
-    {
-        Trace(
-            TRACE_LEVEL_ERROR,
-            TRACE_SPB,
-            "Error reading from Spb - 0x%08lX",
-            status);
+        NULL
+    );
+    if (!NT_SUCCESS(status)) {
+        Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Failed to send ioctl - 0x%08lX", status);
         goto exit;
     }
 
-#if I2C_VERBOSE_LOGGING
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "I2CREAD: LENGTH=%d", Length);
-    for (ULONG j = 0; j < Length; j++)
-    {
-        UCHAR byte = *(buffer + j);
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, " %02hhX", byte);
-    }
-    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "\n");
-#endif
-
-    //
-    // Copy back to the caller's buffer
-    //
-    RtlCopyMemory(Data, buffer, Length);
-
 exit:
-    if (NULL != memory)
+    if (NULL != memoryRead)
     {
-        WdfObjectDelete(memory);
+        WdfObjectDelete(memoryRead);
     }
 
+    if (NULL != memoryWrite)
+    {
+        WdfObjectDelete(memoryWrite);
+    }
     WdfWaitLockRelease(SpbContext->SpbLock);
-
     return status;
 }
 

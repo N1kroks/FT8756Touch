@@ -26,9 +26,9 @@
 #include <resolutions.h>
 #include <hid.h>
 #include <HidCommon.h>
-#include <spb.h>
+#include <_spb.h>
 
-#define MAX_TOUCHES                32
+#define MAX_TOUCHES                10
 #define MAX_BUTTONS                3
 
 typedef struct _OBJECT_INFO

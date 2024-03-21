@@ -10,7 +10,7 @@
 #include <reshub.h>
 #include "trace.h"
 #include "hid.h"
-#include "spb.h"
+#include "_spb.h"
 
 //
 // Memory tags
