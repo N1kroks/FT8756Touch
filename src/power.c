@@ -23,6 +23,7 @@
 #include <controller.h>
 #include <spb.h>
 #include <ft5x\ftinternal.h>
+#include <ft5x\ftfwupdate.h>
 #include <internal.h>
 #include <touch_power\touch_power.h>
 #include <power.tmh>
@@ -248,6 +249,9 @@ TchPowerSettingCallback(
                     status);
                 goto exit;
             }
+
+            //Load firmware each time after display turned on
+            status = FTLoadFirmwareFile(ControllerContext->FxDevice, SpbContext);
             break;
         case 2:
             Trace(

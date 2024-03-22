@@ -87,26 +87,6 @@ Ft5xConfigureFunctions(
     }
 
     Trace(TRACE_LEVEL_INFORMATION, TRACE_INTERRUPT, "Chip ID: 0x%02x%02x", ChipId[0], ChipId[1]);
-
-    status = FTLoadFirmwareFile(controller->FxDevice, SpbContext);
-
-    ChipId[0] = 0x0;
-    ChipId[1] = 0x0;
-
-    IdCmd[0] = FTS_CMD_READ_ID;
-    IdCmd[1] = 0x0;
-
-    status = FTS_Read(SpbContext, IdCmd, ChipId, 2);
-    if (!NT_SUCCESS(status)) {
-        Trace(
-            TRACE_LEVEL_ERROR,
-            TRACE_INTERRUPT,
-            "Failed to read ChipID - 0x%08lX",
-            status);
-        goto exit;
-    }
-
-    Trace(TRACE_LEVEL_INFORMATION, TRACE_INTERRUPT, "Chip ID after load firmware: 0x%02x%02x", ChipId[0], ChipId[1]);
 exit:
     return STATUS_SUCCESS;
 }

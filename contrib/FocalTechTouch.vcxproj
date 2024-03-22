@@ -208,6 +208,7 @@
     <TargetName>FocalTechTouch</TargetName>
     <IncludePath>$(IntDir);$(SolutionDir)..\include;$(IncludePath)</IncludePath>
     <IntDir>..\intermediate\$(Platform)\$(ConfigurationName)\</IntDir>
+    <Inf2CatUseLocalTime>true</Inf2CatUseLocalTime>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
