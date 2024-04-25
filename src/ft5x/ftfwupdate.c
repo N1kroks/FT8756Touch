@@ -55,6 +55,122 @@ exit:
 	return status;
 }
 
+void FTSEccCalHost(UINT8* data, UINT32 dataLen, UINT16* eccValue)
+{
+	UINT16 ecc = 0;
+	UINT16 i = 0;
+	UINT16 j = 0;
+	UINT16 al2_fcs_coef = ((1 << 15) + (1 << 10) + (1 << 3));
+
+	for (i = 0; i < dataLen; i += 2) {
+		ecc ^= ((data[i] << 8) | (data[i + 1]));
+		for (j = 0; j < 16; j++) {
+			if (ecc & 0x01)
+				ecc = (UINT16)((ecc >> 1) ^ al2_fcs_coef);
+			else
+				ecc >>= 1;
+		}
+	}
+
+	*eccValue = ecc & 0x0000FFFF;
+}
+
+NTSTATUS FTSEccCalTP(IN SPB_CONTEXT* SpbContext, UINT32 eccAddr, UINT32 eccLen, UINT16* eccValue)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	LARGE_INTEGER delay;
+	int i;
+	UINT8 cmd[7] = { 0 };
+	UINT8 value[2] = { 0 };
+
+	cmd[0] = 0xCC;
+	cmd[1] = (UINT8)(((eccAddr) >> 16) & 0xFF);
+	cmd[2] = (UINT8)(((eccAddr) >> 8) & 0xFF);
+	cmd[3] = (UINT8)((eccAddr) & 0xFF);
+	cmd[4] = (UINT8)(((eccLen) >> 16) & 0xFF);
+	cmd[5] = (UINT8)(((eccLen) >> 8) & 0xFF);
+	cmd[6] = (UINT8)((eccLen) & 0xFF);
+
+	status = FTS_Write(SpbContext, cmd, 7);
+	if (!NT_SUCCESS(status)) {
+		Trace(TRACE_LEVEL_ERROR, TRACE_FTFWUPDATE, "ecc calc cmd fail %!STATUS!", status);
+		goto exit;
+	}
+	delay.QuadPart = 2000;
+	KeDelayExecutionThread(KernelMode, TRUE, &delay);
+
+	cmd[0] = 0xCE;
+	for (i = 0; i < 100; i++) {
+		status = FTS_Read(SpbContext, cmd, value, 1);
+		if (!NT_SUCCESS(status)) {
+			Trace(TRACE_LEVEL_ERROR, TRACE_FTFWUPDATE, "ecc finish cmd fail %!STATUS!", status);
+			goto exit;
+		}
+		if (value[0] == 0xA5)
+			break;
+		delay.QuadPart = 1000;
+		KeDelayExecutionThread(KernelMode, TRUE, &delay);
+	}
+	if (i >= 100) {
+		Trace(TRACE_LEVEL_ERROR, TRACE_FTFWUPDATE, "failed to wait ecc finish timeout, ecc_finish: 0x%X %!STATUS!", value[0], status);
+		status = STATUS_IO_DEVICE_ERROR;
+		goto exit;
+	}
+
+	cmd[0] = 0xCD;
+	status = FTS_Read(SpbContext, cmd, value, 2);
+	if (!NT_SUCCESS(status)) {
+		Trace(TRACE_LEVEL_ERROR, TRACE_FTFWUPDATE, "ecc read cmd fail %!STATUS!", status);
+		goto exit;
+	}
+	*eccValue = ((UINT16)(value[0] << 8) + value[1]) & 0x0000FFFF;
+
+exit:
+	return status;
+}
+
+NTSTATUS FTSEccCheck(IN SPB_CONTEXT* SpbContext, UINT8* buf, UINT32 len, UINT32 eccAddr)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	UINT32 packetSize = 32766;
+	UINT16 eccHost = 0;
+	UINT16 eccTp = 0;
+	int offset = 0;
+	int packetNumber = 0;
+	int packetRemainder = 0;
+	int packetLength;
+
+	packetNumber = len / packetSize;
+	packetRemainder = len % packetSize;
+	if (packetRemainder)
+		packetNumber++;
+	packetLength = packetSize;
+
+	for (int i = 0; i < packetNumber; i++) {
+		if ((i == (packetNumber - 1)) && packetRemainder)
+			packetLength = packetRemainder;
+
+		FTSEccCalHost(buf + offset, packetLength, &eccHost);
+
+		status = FTSEccCalTP(SpbContext, eccAddr + offset, packetLength, &eccTp);
+		if (!NT_SUCCESS(status)) {
+			Trace(TRACE_LEVEL_ERROR, TRACE_FTFWUPDATE, "failed to get ecc from tp %!STATUS!", status);
+			goto exit;
+		}
+
+		Trace(TRACE_LEVEL_INFORMATION, TRACE_FTFWUPDATE, "eccHost: 0x%X, eccTp: 0x%X, i: %d", eccHost, eccTp, i);
+		if (eccHost != eccTp) {
+			Trace(TRACE_LEVEL_ERROR, TRACE_FTFWUPDATE, "eccHost(0x%X) != eccTp(0x%X) ecc check fail", eccHost, eccTp);
+			status = STATUS_IO_DEVICE_ERROR;
+			goto exit;
+		}
+
+		offset += packetLength;
+	}
+exit:
+	return status;
+}
+
 NTSTATUS FTSPramWriteEcc(SPB_CONTEXT* SpbContext, UINT8* buf) {
 	NTSTATUS status = STATUS_SUCCESS;
 	UINT16 CodeLen;
@@ -75,6 +191,11 @@ NTSTATUS FTSPramWriteEcc(SPB_CONTEXT* SpbContext, UINT8* buf) {
 		goto exit;
 	}
 
+	status = FTSEccCheck(SpbContext, buf, CodeLen * 2, 0);
+	if (!NT_SUCCESS(status)) {
+		Trace(TRACE_LEVEL_ERROR, TRACE_FTFWUPDATE, "Failed to calc pram crc %!STATUS!", status);
+		goto exit;
+	}
 	//TODO: Add a crc check
 
 exit:
@@ -104,6 +225,11 @@ NTSTATUS FTSDramWriteEcc(SPB_CONTEXT* SpbContext, UINT8* buf) {
 		goto exit;
 	}
 
+	status = FTSEccCheck(SpbContext, buf + PramAppSize, CodeLen * 2, 0);
+	if (!NT_SUCCESS(status)) {
+		Trace(TRACE_LEVEL_ERROR, TRACE_FTFWUPDATE, "Failed to calc dram crc %!STATUS!", status);
+		goto exit;
+	}
 	//TODO: Add a crc check
 
 exit:

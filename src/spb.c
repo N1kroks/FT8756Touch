@@ -27,6 +27,39 @@
 #include <reshub.h>
 #include <spb.tmh>
 
+static void crckermit(UINT8* data, UINT32 len, UINT16* crc_out)
+{
+    UINT32 i = 0;
+    UINT16 j = 0;
+    UINT16 crc = 0xFFFF;
+
+    for (i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (j = 0; j < 8; j++) {
+            if (crc & 0x01)
+                crc = (crc >> 1) ^ 0x8408;
+            else
+                crc = (crc >> 1);
+        }
+    }
+
+    *crc_out = crc;
+}
+
+static int rdata_check(UINT8* rdata, UINT32 rlen)
+{
+    UINT16 crc_calc = 0;
+    UINT16 crc_read = 0;
+
+    crckermit(rdata, rlen - 2, &crc_calc);
+    crc_read = (UINT16)(rdata[rlen - 1] << 8) + rdata[rlen - 2];
+    if (crc_calc != crc_read) {
+        return -1;
+    }
+
+    return 0;
+}
+
 NTSTATUS FTS_Read(IN SPB_CONTEXT* SpbContext, IN UINT8* cmd, OUT UINT8* data, IN UINT32 datalen) {
     NTSTATUS status;
     WDFMEMORY memoryRead = NULL, memoryWrite = NULL;
@@ -108,29 +141,35 @@ NTSTATUS FTS_Read(IN SPB_CONTEXT* SpbContext, IN UINT8* cmd, OUT UINT8* data, IN
         sizeof(seq)
     );
 
-    status = WdfIoTargetSendIoctlSynchronously(
-        SpbContext->SpbIoTarget,
-        NULL,
-        IOCTL_SPB_FULL_DUPLEX,
-        &memoryDescriptor,
-        NULL,
-        NULL,
-        NULL
-    );
+    for (int i = 0; i < 5; i++) {
+        status = WdfIoTargetSendIoctlSynchronously(
+            SpbContext->SpbIoTarget,
+            NULL,
+            IOCTL_SPB_FULL_DUPLEX,
+            &memoryDescriptor,
+            NULL,
+            NULL,
+            NULL
+        );
 
-    if (!NT_SUCCESS(status)) {
-        Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Failed to send ioctl - 0x%08lX", status);
-        goto exit;
-    }
+        if (!NT_SUCCESS(status)) {
+            Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Failed to send ioctl - 0x%08lX", status);
+            goto exit;
+        }
 
-    if ((bufferRead[3] & 0xA0) == 0) {
-        RtlCopyMemory(data, &bufferRead[dp], datalen);
-
-        //TODO: Add a crc check
-    }
-    else {
-        Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Error during data getting addr: 0x%X, status: 0x%X", cmd[0], bufferRead[3]);
-        goto exit;
+        if ((bufferRead[3] & 0xA0) == 0) {
+            RtlCopyMemory(data, &bufferRead[dp], datalen);
+            int ret = rdata_check(&bufferRead[dp], txlen - dp);
+            if (ret < 0) {
+                Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Error during data read addr: 0x%X, retry: %d", cmd[0], i);
+                continue;
+            }
+            Trace(TRACE_LEVEL_INFORMATION, TRACE_SPB, "CRC check OK");
+            break;
+        }
+        else {
+            Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Error during data getting addr: 0x%X, status: 0x%X", cmd[0], bufferRead[3]);
+        }
     }
 exit:
     if (NULL != memoryRead)
@@ -227,18 +266,24 @@ NTSTATUS FTS_Write(IN SPB_CONTEXT* SpbContext, IN UINT8* cmd, IN UINT32 writelen
         sizeof(seq)
     );
 
-    status = WdfIoTargetSendIoctlSynchronously(
-        SpbContext->SpbIoTarget,
-        NULL,
-        IOCTL_SPB_FULL_DUPLEX,
-        &memoryDescriptor,
-        NULL,
-        NULL,
-        NULL
-    );
-    if (!NT_SUCCESS(status)) {
-        Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Failed to send ioctl - 0x%08lX", status);
-        goto exit;
+    for (int i = 0; i < 5; i++) {
+        status = WdfIoTargetSendIoctlSynchronously(
+            SpbContext->SpbIoTarget,
+            NULL,
+            IOCTL_SPB_FULL_DUPLEX,
+            &memoryDescriptor,
+            NULL,
+            NULL,
+            NULL
+        );
+        if (!NT_SUCCESS(status)) {
+            Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Failed to send ioctl - 0x%08lX", status);
+        }
+        if ((bufferRead[3] & 0xA0) == 0) {
+            Trace(TRACE_LEVEL_INFORMATION, TRACE_SPB, "Write OK");
+            break;
+        }
+        Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "data write status 0x%X, retry: %d", bufferRead[3], i);
     }
 
 exit:
