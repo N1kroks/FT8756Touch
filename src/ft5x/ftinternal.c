@@ -124,10 +124,10 @@ Return Value:
     UINT32 base = 0;
 
     UINT8 input_id = 0;
-    UINT8 point[63] = { 0 };
+    UINT8 point[91] = { 0x0 };
     point[0] = 0x1;
 
-    status = FTS_Read(SpbContext, point, point + 1, 62);
+    status = FTS_Read(SpbContext, point, point + 1, 90);
     if (!NT_SUCCESS(status)) {
         Trace(TRACE_LEVEL_ERROR, TRACE_INTERRUPT, "failed to read finger status data %!STATUS!", status);
         goto exit;
@@ -136,8 +136,8 @@ Return Value:
     for (UINT8 i = 0; i < 10; i++) {
         base = 6 * i;
         input_id = point[5 + base] >> 4;
-        if (input_id > 10)
-            break;
+        if (input_id >= 10)
+            continue;
 
         if ((point[3 + base] >> 6) == 0x0 || (point[3 + base] >> 6) == 0x2) {
             Data->States[input_id] = OBJECT_STATE_FINGER_PRESENT_WITH_ACCURATE_POS;

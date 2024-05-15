@@ -162,9 +162,11 @@ NTSTATUS FTS_Read(IN SPB_CONTEXT* SpbContext, IN UINT8* cmd, OUT UINT8* data, IN
             int ret = rdata_check(&bufferRead[dp], txlen - dp);
             if (ret < 0) {
                 Trace(TRACE_LEVEL_ERROR, TRACE_SPB, "Error during data read addr: 0x%X, retry: %d", cmd[0], i);
+                status = STATUS_DATA_ERROR;
                 continue;
             }
             Trace(TRACE_LEVEL_INFORMATION, TRACE_SPB, "CRC check OK");
+            status = STATUS_SUCCESS;
             break;
         }
         else {
